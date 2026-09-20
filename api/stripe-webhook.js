@@ -103,7 +103,7 @@ module.exports = async (req, res) => {
         });
 
         await resend.emails.send({
-          from: 'orders@yourdomain.com',
+          from: 'onboarding@resend.dev',
           to: customerEmail,
           subject: 'Your Gentleman Knives shipping label',
           html: `
