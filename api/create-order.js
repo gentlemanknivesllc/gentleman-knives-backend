@@ -8,6 +8,20 @@ const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 module.exports = async (req, res) => {
+  // These headers are what let your Squarespace site (a different domain)
+  // actually talk to this backend. Without them, the browser blocks the
+  // request before it ever reaches this code, which is why it looked like
+  // nothing was happening.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Browsers send a quick "OPTIONS" check before the real POST request to
+  // ask permission. We just need to say "yes" and stop here.
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Use POST' });
   }
@@ -42,7 +56,7 @@ module.exports = async (req, res) => {
         setup_future_usage: 'off_session'
       },
       // Collects the customer's mailing address right in Stripe's checkout,
-      // which the webhook below uses to generate the shipping label.
+      // which the webhook uses to generate the shipping label.
       shipping_address_collection: { allowed_countries: ['US'] },
       line_items: [{
         price_data: {
@@ -64,8 +78,8 @@ module.exports = async (req, res) => {
         sharpeningEstimate: String(sharpeningEstimate || 0),
         shippingEstimate: String(shippingEstimate)
       },
-      success_url: 'https://YOURSITE.com/thank-you?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: 'https://YOURSITE.com/estimate'
+      success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: 'https://www.gentlemanknives.co/estimate'
     });
 
     res.status(200).json({ url: session.url });
