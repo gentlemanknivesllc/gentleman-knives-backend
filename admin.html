@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Charge final total</title></head>
+<body style="font-family:sans-serif; max-width:400px; margin:60px auto;">
+  <h2>Charge final total</h2>
+  <p style="font-size:13px; color:#666;">Don't share this page's link publicly &mdash; anyone with the admin password can trigger a charge.</p>
+
+  <input id="secret" type="password" placeholder="Admin password" style="width:100%; margin-bottom:8px; padding:8px;">
+  <input id="email" placeholder="Customer email" style="width:100%; margin-bottom:8px; padding:8px;">
+  <input id="amount" placeholder="Final amount, e.g. 18.50" style="width:100%; margin-bottom:8px; padding:8px;">
+  <button onclick="charge()" style="width:100%; padding:10px; cursor:pointer;">Charge customer</button>
+  <p id="result" style="font-size:13px; margin-top:12px;"></p>
+
+  <script>
+    async function charge() {
+      const resultEl = document.getElementById('result');
+      resultEl.textContent = 'Charging...';
+      try {
+        const res = await fetch('/api/finalize-order', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': document.getElementById('secret').value
+          },
+          body: JSON.stringify({
+            customerEmail: document.getElementById('email').value,
+            finalAmount: parseFloat(document.getElementById('amount').value)
+          })
+        });
+        const data = await res.json();
+        resultEl.textContent = res.ok
+          ? 'Charged successfully. Payment ID: ' + data.paymentIntentId
+          : 'Error: ' + data.error;
+      } catch (err) {
+        resultEl.textContent = 'Request failed: ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>

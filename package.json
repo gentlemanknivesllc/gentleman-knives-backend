@@ -1,0 +1,10 @@
+{
+  "name": "gentleman-knives-backend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "stripe": "^17.0.0",
+    "shippo": "^2.0.0",
+    "resend": "^4.0.0"
+  }
+}
