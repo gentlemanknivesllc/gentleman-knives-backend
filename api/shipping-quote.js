@@ -28,15 +28,16 @@ module.exports = async (req, res) => {
 
     const quote = await calculateShipping(items, addressTo);
 
-    // Build the "N more items saves you $X" nudge, if applicable.
+    // Build the "N more items saves you $X" nudge, if applicable. Shows
+    // the TOTAL discount at the next tier (not just the incremental gain
+    // over the current one) — "save $5" reads as a clear step up, where
+    // showing the marginal +$2 gain read as confusingly smaller than the
+    // earlier +$3 nudge even though the real total kept climbing.
     let nudge = null;
     const next = nextDiscountTier(quote.itemCount);
     if (next) {
       const itemsNeeded = next.minItems - quote.itemCount;
-      const gain = next.discount - quote.discount;
-      if (gain > 0) {
-        nudge = `Add ${itemsNeeded} more item${itemsNeeded > 1 ? 's' : ''} to save $${gain.toFixed(2)} on shipping`;
-      }
+      nudge = `Add ${itemsNeeded} more item${itemsNeeded > 1 ? 's' : ''} to save $${next.discount.toFixed(2)} on shipping`;
     }
 
     res.status(200).json({ ...quote, nudge });
