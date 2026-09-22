@@ -5,6 +5,7 @@
   "dependencies": {
     "stripe": "^17.0.0",
     "shippo": "^2.0.0",
-    "resend": "^4.0.0"
+    "resend": "^4.0.0",
+    "@vercel/postgres": "^0.10.0"
   }
 }
