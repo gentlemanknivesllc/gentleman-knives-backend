@@ -5,7 +5,7 @@
 // same calculation server-side in create-order.js so a tampered client
 // value can never be trusted.
 
-const { calculateShipping, MINIMUM_ITEMS, DISCOUNT_CAP_ITEM_COUNT } = require('../lib/shipping');
+const { calculateShipping, MINIMUM_ITEMS, nextDiscountTier } = require('../lib/shipping');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,15 +28,14 @@ module.exports = async (req, res) => {
 
     const quote = await calculateShipping(items, addressTo);
 
-    // Build the "one more item saves you $X" nudge, if applicable.
+    // Build the "N more items saves you $X" nudge, if applicable.
     let nudge = null;
-    if (quote.itemCount < DISCOUNT_CAP_ITEM_COUNT) {
-      const nextCount = quote.itemCount + 1;
-      if (nextCount > MINIMUM_ITEMS) {
-        const currentDiscount = quote.discount;
-        const nextDiscount = Math.min(nextCount - MINIMUM_ITEMS, DISCOUNT_CAP_ITEM_COUNT - MINIMUM_ITEMS) * 0.75;
-        const gain = Math.round((nextDiscount - currentDiscount) * 100) / 100;
-        if (gain > 0) nudge = `Add 1 more item to save $${gain.toFixed(2)} on shipping`;
+    const next = nextDiscountTier(quote.itemCount);
+    if (next) {
+      const itemsNeeded = next.minItems - quote.itemCount;
+      const gain = next.discount - quote.discount;
+      if (gain > 0) {
+        nudge = `Add ${itemsNeeded} more item${itemsNeeded > 1 ? 's' : ''} to save $${gain.toFixed(2)} on shipping`;
       }
     }
 
