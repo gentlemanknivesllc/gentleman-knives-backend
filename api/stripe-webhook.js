@@ -1,15 +1,14 @@
 // api/stripe-webhook.js
 // Stripe calls this automatically the instant a shipping payment succeeds.
-// This is where the label actually gets generated and emailed — no one has
-// to click anything for this to happen.
+// This is where the inbound label actually gets generated and emailed — no
+// one has to click anything for this to happen.
 
 const Stripe = require('stripe');
-const { Shippo } = require('shippo');
-const { Resend } = require('resend');
-
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const shippo = new Shippo({ apiKeyHeader: `ShippoToken ${process.env.SHIPPO_API_KEY}` });
-const resend = new Resend(process.env.RESEND_API_KEY);
+const { purchaseLabel, emailInboundLabel } = require('../lib/labels');
+const { totalItemWeight, INBOUND_PACKAGING_BUFFER_LB } = require('../lib/shipping');
+const { createSubscriberRecord } = require('../lib/subscriptions');
+const { sql } = require('../lib/db');
 
 // Stripe needs the raw, unparsed request body to verify this request really
 // came from Stripe (not someone pretending to be Stripe).
@@ -43,7 +42,12 @@ module.exports = async (req, res) => {
       expand: ['payment_intent', 'customer']
     });
 
-    const shippingAddress = fullSession.shipping_details ? fullSession.shipping_details.address : null;
+    // Stripe moved this field to collected_information.shipping_details in
+    // a 2025 API update — check both locations so this works regardless of
+    // which API version this Stripe account is pinned to.
+    const shippingAddress = (fullSession.collected_information && fullSession.collected_information.shipping_details)
+      ? fullSession.collected_information.shipping_details.address
+      : (fullSession.shipping_details ? fullSession.shipping_details.address : null);
     const customerEmail = fullSession.customer_details.email;
     const customerName = fullSession.customer_details.name;
     const paymentMethodId = fullSession.payment_intent.payment_method;
@@ -56,15 +60,6 @@ module.exports = async (req, res) => {
 
     if (shippingAddress) {
       try {
-        const fromAddress = {
-          name: process.env.BUSINESS_NAME,
-          street1: process.env.BUSINESS_STREET,
-          city: process.env.BUSINESS_CITY,
-          state: process.env.BUSINESS_STATE,
-          zip: process.env.BUSINESS_ZIP,
-          country: 'US'
-        };
-
         const toAddress = {
           name: customerName,
           street1: shippingAddress.line1,
@@ -75,50 +70,44 @@ module.exports = async (req, res) => {
           country: shippingAddress.country
         };
 
-        // NOTE: weight/dimensions are hardcoded for now. Once you're ready,
-        // pull the box tier + estimated weight from the calculator's order
-        // data (it's sitting in fullSession.metadata) and set these dynamically.
-        const shipment = await shippo.shipments.create({
-          addressFrom: fromAddress,
-          addressTo: toAddress,
-          parcels: [{
-            length: '10',
-            width: '8',
-            height: '4',
-            distanceUnit: 'in',
-            weight: '2',
-            massUnit: 'lb'
-          }],
-          async: false
+        // Real weight, pulled from the items this checkout was actually
+        // for (stored in metadata by create-order.js) instead of a
+        // hardcoded guess.
+        const items = JSON.parse(fullSession.metadata.items || '[]');
+        const weightLb = Math.round((totalItemWeight(items) + INBOUND_PACKAGING_BUFFER_LB) * 100) / 100;
+
+        const label = await purchaseLabel({
+          direction: 'inbound',
+          customerAddress: toAddress,
+          weightLb
         });
 
-        const cheapestRate = shipment.rates
-          .slice()
-          .sort((a, b) => parseFloat(a.amount) - parseFloat(b.amount))[0];
+        await emailInboundLabel(customerEmail, label);
 
-        const transaction = await shippo.transactions.create({
-          rate: cheapestRate.objectId,
-          labelFileType: 'PDF',
-          async: false
-        });
-
-        await resend.emails.send({
-          from: 'onboarding@resend.dev',
-          to: customerEmail,
-          subject: 'Your Gentleman Knives shipping label',
-          html: `
-            <p>Thanks for your order! Print the label below and ship your knives to us.</p>
-            <p><a href="${transaction.labelUrl}">Download your shipping label</a></p>
-            <p>Tracking number: ${transaction.trackingNumber}</p>
-            <p>We'll email you the final total once we receive and measure your items.</p>
-          `
-        });
+        // If they checked "subscribe" during checkout, set that up now —
+        // this is the point where we finally have both a saved payment
+        // method AND a confirmed shipping address to attach to it.
+        const subscribeTier = fullSession.metadata.subscribeTier;
+        if (subscribeTier) {
+          try {
+            await createSubscriberRecord({
+              sql,
+              email: customerEmail,
+              stripeCustomerId: fullSession.customer.id,
+              tier: subscribeTier,
+              defaultConfig: items,
+              shippingAddress: toAddress
+            });
+          } catch (subErr) {
+            console.error('Subscription signup during checkout failed:', subErr);
+          }
+        }
       } catch (err) {
         // Payment already succeeded at this point, so we log this rather
         // than fail the whole webhook — you don't want Stripe retrying a
         // charge that already worked. Check your Vercel logs if a label
         // doesn't go out.
-        console.error('Shippo/email step failed:', err);
+        console.error('Label purchase/email step failed:', err);
       }
     }
   }
