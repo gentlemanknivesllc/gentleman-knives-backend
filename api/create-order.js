@@ -59,6 +59,11 @@ module.exports = async (req, res) => {
         setup_future_usage: 'off_session'
       },
       shipping_address_collection: { allowed_countries: ['US'] },
+      // USPS requires a phone number on the SHIPPER'S address for inbound
+      // labels (the customer is the shipper when they're sending knives to
+      // us) — without this, Stripe never asks for one and the label
+      // purchase fails downstream.
+      phone_number_collection: { enabled: true },
       // Single combined line item — no separate shipping cost is ever shown.
       line_items: [{
         price_data: {
