@@ -18,11 +18,15 @@ module.exports = async (req, res) => {
     const { items, zip } = req.body;
     if (!items || !items.length) return res.status(400).json({ error: 'No items provided' });
 
+    if (!zip || !/^\d{5}(-\d{4})?$/.test(zip.trim())) {
+      return res.status(400).json({ error: 'A valid ZIP code is required for an accurate quote' });
+    }
+
     // Address only needs to be good enough for a rate quote at this stage —
     // full address collection happens in Stripe Checkout.
     const addressTo = {
       name: 'Estimate',
-      zip: zip || '10001', // fallback ZIP for a rough quote if not yet entered
+      zip: zip.trim(),
       country: 'US'
     };
 
