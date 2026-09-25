@@ -1,14 +1,14 @@
 // api/subscribe.js
-// Called when a customer signs up for a subscription tier (from a
-// Squarespace form/block you'll add pointing at this endpoint). Requires a
-// card already saved via a prior Stripe Checkout — in practice, point
-// subscription signup at a normal create-order checkout first if this is
-// someone's first-ever order, then call this endpoint after.
+// Standalone endpoint for signing up for a subscription AFTER a prior
+// order already exists (e.g. an existing customer decides to subscribe
+// later). For signing up DURING checkout, see the metadata.subscribeTier
+// handling in stripe-webhook.js instead — that's the primary path the
+// calculator's subscription tab uses.
 
 const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { sql } = require('../lib/db');
-const { TIER_DISCOUNTS, generateToken, nextRenewalDate } = require('../lib/subscriptions');
+const { TIER_DISCOUNTS, createSubscriberRecord } = require('../lib/subscriptions');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -29,25 +29,42 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: 'No saved card on file — customer must complete a checkout first' });
     }
 
-    const renewal = nextRenewalDate(tier);
-
-    const { rows } = await sql`
-      INSERT INTO subscribers (email, stripe_customer_id, tier, discount_pct, default_config, next_renewal)
-      VALUES (${customerEmail}, ${customer.id}, ${tier}, ${TIER_DISCOUNTS[tier]}, ${JSON.stringify(defaultConfig)}, ${renewal.toISOString().slice(0, 10)})
-      ON CONFLICT (email) DO UPDATE SET tier = EXCLUDED.tier, discount_pct = EXCLUDED.discount_pct,
-        default_config = EXCLUDED.default_config, next_renewal = EXCLUDED.next_renewal, status = 'active', consecutive_misses = 0
-      RETURNING id
+    const { rows: orderRows } = await sql`
+      SELECT stripe_session_id FROM orders WHERE customer_email = ${customerEmail}
+      ORDER BY created_at DESC LIMIT 1
     `;
+    if (!orderRows.length) {
+      return res.status(400).json({ error: 'No previous order found — customer must complete a checkout first' });
+    }
 
-    const subscriberId = rows[0].id;
-    const token = generateToken();
+    const session = await stripe.checkout.sessions.retrieve(orderRows[0].stripe_session_id);
+    const shippingAddress = (session.collected_information && session.collected_information.shipping_details)
+      ? session.collected_information.shipping_details.address
+      : (session.shipping_details ? session.shipping_details.address : null);
+    if (!shippingAddress) {
+      return res.status(400).json({ error: 'No shipping address found on file for this customer' });
+    }
 
-    await sql`
-      INSERT INTO renewal_cycles (subscriber_id, token, renewal_date)
-      VALUES (${subscriberId}, ${token}, ${renewal.toISOString().slice(0, 10)})
-    `;
+    const shippingAddressForShippo = {
+      name: session.customer_details.name,
+      street1: shippingAddress.line1,
+      street2: shippingAddress.line2 || '',
+      city: shippingAddress.city,
+      state: shippingAddress.state,
+      zip: shippingAddress.postal_code,
+      country: shippingAddress.country
+    };
 
-    res.status(200).json({ success: true, tier, discount: TIER_DISCOUNTS[tier], nextRenewal: renewal.toISOString().slice(0, 10) });
+    const result = await createSubscriberRecord({
+      sql,
+      email: customerEmail,
+      stripeCustomerId: customer.id,
+      tier,
+      defaultConfig,
+      shippingAddress: shippingAddressForShippo
+    });
+
+    res.status(200).json({ success: true, tier, discount: TIER_DISCOUNTS[tier], nextRenewal: result.nextRenewal });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Could not create subscription' });
