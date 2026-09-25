@@ -33,12 +33,21 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: 'Missing customer email or items' });
     }
 
+    // Require a real ZIP before charging anything — falling back to a
+    // placeholder here would mean the actual amount charged doesn't
+    // reflect the customer's real shipping cost, which we (not the
+    // customer) would be on the hook for if they live somewhere the
+    // placeholder underestimates.
+    if (!customerZip || !/^\d{5}(-\d{4})?$/.test(customerZip.trim())) {
+      return res.status(400).json({ error: 'A valid ZIP code is required to calculate your real shipping cost' });
+    }
+
     const count = items.reduce((sum, i) => sum + (i.qty || 1), 0);
     if (count < MINIMUM_ITEMS) {
       return res.status(400).json({ error: `Minimum order is ${MINIMUM_ITEMS} items` });
     }
 
-    const addressTo = { zip: customerZip || '10001', country: 'US' };
+    const addressTo = { zip: customerZip.trim(), country: 'US' };
     const shipping = await calculateShipping(items, addressTo);
 
     const combinedTotal = Math.round((Number(sharpeningEstimate || 0) + shipping.finalShipping) * 100) / 100;
