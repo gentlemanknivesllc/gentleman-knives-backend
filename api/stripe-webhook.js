@@ -67,7 +67,12 @@ module.exports = async (req, res) => {
           city: shippingAddress.city,
           state: shippingAddress.state,
           zip: shippingAddress.postal_code,
-          country: shippingAddress.country
+          country: shippingAddress.country,
+          // USPS requires these on the SHIPPER'S address — for an inbound
+          // label, that's the customer (they're the one sending the
+          // package), not our business.
+          email: customerEmail,
+          phone: fullSession.customer_details.phone
         };
 
         // Real weight, pulled from the items this checkout was actually
