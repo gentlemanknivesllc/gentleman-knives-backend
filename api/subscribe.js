@@ -52,7 +52,11 @@ module.exports = async (req, res) => {
       city: shippingAddress.city,
       state: shippingAddress.state,
       zip: shippingAddress.postal_code,
-      country: shippingAddress.country
+      country: shippingAddress.country,
+      // Same USPS requirement as the main webhook — the customer is the
+      // shipper for inbound labels, so their contact info is required.
+      email: customerEmail,
+      phone: session.customer_details.phone
     };
 
     const result = await createSubscriberRecord({
