@@ -42,6 +42,25 @@ module.exports = async (req, res) => {
       expand: ['payment_intent', 'customer']
     });
 
+    // Raffle entries are a completely different kind of checkout — no
+    // shipping, no label, no subscription. Branch off early and skip all
+    // the normal order-processing logic entirely.
+    if (fullSession.metadata && fullSession.metadata.type === 'raffle_entry') {
+      try {
+        const email = fullSession.metadata.email;
+        const quantity = parseInt(fullSession.metadata.quantity, 10) || 1;
+
+        await sql`
+          INSERT INTO raffle_entries (email, entry_type, quantity, stripe_session_id)
+          VALUES (${email.trim().toLowerCase()}, 'paid', ${quantity}, ${fullSession.id})
+        `;
+      } catch (raffleErr) {
+        console.error('Raffle entry recording failed:', raffleErr);
+      }
+
+      return res.status(200).json({ received: true });
+    }
+
     // Stripe moved this field to collected_information.shipping_details in
     // a 2025 API update — check both locations so this works regardless of
     // which API version this Stripe account is pinned to.
