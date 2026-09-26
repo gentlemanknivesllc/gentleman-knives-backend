@@ -44,8 +44,8 @@ module.exports = async (req, res) => {
         email,
         quantity: String(qty)
       },
-      success_url: 'https://www.gentlemanknives.co/raffle?entered=1',
-      cancel_url: 'https://www.gentlemanknives.co/raffle'
+      success_url: 'https://www.gentlemanknives.co/promotions?entered=1',
+      cancel_url: 'https://www.gentlemanknives.co/promotions'
     });
 
     res.status(200).json({ url: session.url });
