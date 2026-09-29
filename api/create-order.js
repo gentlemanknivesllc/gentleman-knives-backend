@@ -2,14 +2,19 @@
 // Called by your Squarespace calculator when the customer clicks "Continue to
 // shipping & payment". Recalculates shipping live via Shippo server-side
 // (never trusts a client-supplied number), enforces the 3-item minimum,
-// combines sharpening + shipping into a single line item so no separate
-// shipping cost is ever shown to the customer, and logs the order for the
-// typical-price averaging system.
+// and logs the order for the typical-price averaging system.
+//
+// CHARGE SPLIT: this charges ONLY the shipping cost (both directions) right
+// now. It also saves the card on file. The sharpening total is a separate,
+// later charge — that happens in finalize-order.js once the knives have
+// arrived and the real total is known. Two charges, two different times,
+// on purpose.
 
 const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { calculateShipping, MINIMUM_ITEMS } = require('../lib/shipping');
 const { sql } = require('../lib/db');
+const { checkWeeklyCapacity } = require('../lib/capacity');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -35,9 +40,7 @@ module.exports = async (req, res) => {
 
     // Require a real ZIP before charging anything — falling back to a
     // placeholder here would mean the actual amount charged doesn't
-    // reflect the customer's real shipping cost, which we (not the
-    // customer) would be on the hook for if they live somewhere the
-    // placeholder underestimates.
+    // reflect the customer's real shipping cost.
     if (!customerZip || !/^\d{5}(-\d{4})?$/.test(customerZip.trim())) {
       return res.status(400).json({ error: 'A valid ZIP code is required to calculate your real shipping cost' });
     }
@@ -47,10 +50,19 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: `Minimum order is ${MINIMUM_ITEMS} items` });
     }
 
+    // Weekly capacity check — see lib/capacity.js for the cap itself.
+    const capacity = await checkWeeklyCapacity(sql);
+    if (!capacity.hasRoom) {
+      return res.status(409).json({
+        error: 'waitlist',
+        message: `We're at capacity for this week (${capacity.cap} orders). Join the waitlist and we'll email you the moment a slot opens.`,
+        ordersThisWeek: capacity.ordersThisWeek,
+        cap: capacity.cap
+      });
+    }
+
     const addressTo = { zip: customerZip.trim(), country: 'US' };
     const shipping = await calculateShipping(items, addressTo);
-
-    const combinedTotal = Math.round((Number(sharpeningEstimate || 0) + shipping.finalShipping) * 100) / 100;
 
     // Reuse the same Stripe customer if this email has ordered before
     const existing = await stripe.customers.list({ email: customerEmail, limit: 1 });
@@ -62,8 +74,8 @@ module.exports = async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer: customer.id,
-      // Keeps the card on file so the later confirmed-total charge can
-      // happen automatically, without the customer present.
+      // Saves the card for the LATER sharpening charge, off-session, once
+      // the real total is known.
       payment_intent_data: {
         setup_future_usage: 'off_session'
       },
@@ -73,15 +85,16 @@ module.exports = async (req, res) => {
       // us) — without this, Stripe never asks for one and the label
       // purchase fails downstream.
       phone_number_collection: { enabled: true },
-      // Single combined line item — no separate shipping cost is ever shown.
+      // Only shipping is charged right now — the sharpening total is a
+      // separate charge later, once we know the real amount.
       line_items: [{
         price_data: {
           currency: 'usd',
           product_data: {
-            name: 'Gentleman Knives — Estimate (includes shipping both ways)',
-            description: 'Your knives ship to us and back. Final charge is confirmed once received, and is always at or below this estimate.'
+            name: 'Gentleman Knives — Shipping (both ways)',
+            description: 'Covers your shipping label to us and back. Your sharpening total is charged separately, once we receive and measure your items, for an amount at or below your estimate.'
           },
-          unit_amount: Math.round(combinedTotal * 100)
+          unit_amount: Math.round(shipping.finalShipping * 100)
         },
         quantity: 1
       }],
