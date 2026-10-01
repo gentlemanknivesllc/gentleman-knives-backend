@@ -22,6 +22,15 @@
   <button onclick="chargeSubscription()" style="width:100%; padding:10px; cursor:pointer;">Charge subscriber</button>
   <p id="sub-result" style="font-size:13px; margin-top:12px;"></p>
 
+  <hr style="margin:32px 0;">
+
+  <h2>Draw raffle winner</h2>
+  <p style="font-size:13px; color:#666;">Each click draws a genuinely fresh random winner from the current entries. Only run this once you actually mean to pick the final winner.</p>
+
+  <input id="draw-secret" type="password" placeholder="Admin password" style="width:100%; margin-bottom:8px; padding:8px;">
+  <button onclick="drawWinner()" style="width:100%; padding:10px; cursor:pointer;">Draw Winner</button>
+  <p id="draw-result" style="font-size:13px; margin-top:12px; white-space:pre-wrap;"></p>
+
   <script>
     async function charge() {
       const resultEl = document.getElementById('result');
@@ -81,6 +90,31 @@
               : ' — WARNING: charge worked but the return label failed (' + (data.returnLabel.error || 'unknown error') + '). Check Vercel logs or buy the label manually.';
           }
           resultEl.textContent = msg;
+        }
+      } catch (err) {
+        resultEl.textContent = 'Request failed: ' + err.message;
+      }
+    }
+
+    async function drawWinner() {
+      const resultEl = document.getElementById('draw-result');
+      resultEl.textContent = 'Drawing...';
+      try {
+        const res = await fetch('/api/raffle-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': document.getElementById('draw-secret').value
+          }
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.textContent = 'Error: ' + data.error;
+        } else {
+          resultEl.textContent =
+            'WINNER: ' + data.winnerEmail + '\n' +
+            'Entry type: ' + data.winnerEntryType + ' (that row held ' + data.winnerRowQuantity + ' entries)\n' +
+            'Winning ticket #' + data.winningTicketNumber + ' out of ' + data.totalEntries + ' total entries across ' + data.totalRows + ' signups.';
         }
       } catch (err) {
         resultEl.textContent = 'Request failed: ' + err.message;
