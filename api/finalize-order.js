@@ -13,12 +13,46 @@ const { totalItemWeight, OUTBOUND_PACKAGING_BUFFER_LB } = require('../lib/shippi
 const { purchaseLabel, emailReturnLabel, emailLocalOrderReady } = require('../lib/labels');
 
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Use POST' });
-  }
-
   if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) {
     return res.status(401).json({ error: 'Not authorized' });
+  }
+
+  // GET = read-only dashboard data for admin.html: every order still
+  // waiting on a final charge, plus a running total of what's actually
+  // been charged so far (a rough revenue figure — it doesn't subtract
+  // Stripe fees, Shippo costs, or gas, so it's gross, not profit).
+  if (req.method === 'GET') {
+    try {
+      const pending = await sql`
+        SELECT id, customer_email, items, sharpening_total, shipping_charged,
+               delivery_fee, fulfillment_type, created_at
+        FROM orders
+        WHERE finalized_at IS NULL
+        ORDER BY created_at ASC
+      `;
+
+      const revenue = await sql`
+        SELECT
+          COALESCE(SUM(sharpening_total), 0) AS total_sharpening,
+          COALESCE(SUM(shipping_charged), 0) AS total_shipping,
+          COALESCE(SUM(delivery_fee), 0) AS total_delivery,
+          COUNT(*) AS order_count
+        FROM orders
+        WHERE finalized_at IS NOT NULL
+      `;
+
+      return res.status(200).json({
+        pending: pending.rows,
+        revenueSummary: revenue.rows[0]
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Use GET or POST' });
   }
 
   const { customerEmail, finalAmount } = req.body;
