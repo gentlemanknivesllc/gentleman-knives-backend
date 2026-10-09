@@ -114,8 +114,8 @@ module.exports = async (req, res) => {
     // Log the order up front (pending finalization) so nothing depends on
     // the webhook alone for record-keeping.
     await sql`
-      INSERT INTO orders (stripe_session_id, customer_email, items, sharpening_total, shipping_charged)
-      VALUES (${session.id}, ${customerEmail}, ${JSON.stringify(items)}, ${sharpeningEstimate || 0}, ${shipping.finalShipping})
+      INSERT INTO orders (stripe_session_id, customer_email, items, sharpening_total, shipping_charged, notes)
+      VALUES (${session.id}, ${customerEmail}, ${JSON.stringify(items)}, ${sharpeningEstimate || 0}, ${shipping.finalShipping}, ${notes || ''})
     `;
 
     res.status(200).json({ url: session.url });
