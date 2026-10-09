@@ -39,11 +39,39 @@ module.exports = async (req, res) => {
       address // required for delivery: { street1, street2, city, state, zip }
     } = req.body;
 
-    if (!customerEmail || !items || !items.length) {
-      return res.status(400).json({ error: 'Missing customer email or items' });
-    }
     if (fulfillment !== 'dropoff' && fulfillment !== 'delivery') {
       return res.status(400).json({ error: 'fulfillment must be "dropoff" or "delivery"' });
+    }
+
+    // Preview mode: called live from the calculator as the customer types
+    // their address, just to show the delivery fee before they commit to
+    // anything. No order is created, no capacity is checked, no Stripe
+    // session happens here — it only runs the same real distance lookup
+    // that the real booking below uses, so the number shown never drifts
+    // from what actually gets charged.
+    if (req.body.preview) {
+      if (fulfillment !== 'delivery') return res.status(200).json({ fee: 0, eligible: true });
+      if (!address || !address.street1 || !address.city || !address.state || !address.zip) {
+        return res.status(400).json({ error: 'A full address is required to preview the delivery fee' });
+      }
+      try {
+        const delivery = await calculateDeliveryFee(address);
+        return res.status(200).json({
+          eligible: delivery.eligible,
+          fee: delivery.fee,
+          oneWayMinutes: delivery.oneWayMinutes,
+          message: !delivery.eligible
+            ? `That address is about ${delivery.oneWayMinutes} min away, which is outside our 30-minute delivery range. Please choose drop-off instead.`
+            : undefined
+        });
+      } catch (distErr) {
+        console.error('Delivery preview lookup failed:', distErr.message);
+        return res.status(502).json({ error: 'Could not look up that address right now.' });
+      }
+    }
+
+    if (!customerEmail || !items || !items.length) {
+      return res.status(400).json({ error: 'Missing customer email or items' });
     }
 
     const count = items.reduce((sum, i) => sum + (i.qty || 1), 0);
@@ -117,8 +145,8 @@ module.exports = async (req, res) => {
         customer: customer.id,
         payment_method_types: ['card'],
         metadata,
-        success_url: 'https://www.gentlemanknives.co/local-thank-you?session_id={CHECKOUT_SESSION_ID}',
-        cancel_url: 'https://www.gentlemanknives.co/local-sharpening'
+        success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://www.gentlemanknives.co/services'
       });
     } else {
       session = await stripe.checkout.sessions.create({
@@ -140,8 +168,8 @@ module.exports = async (req, res) => {
           quantity: 1
         }],
         metadata,
-        success_url: 'https://www.gentlemanknives.co/local-thank-you?session_id={CHECKOUT_SESSION_ID}',
-        cancel_url: 'https://www.gentlemanknives.co/local-sharpening'
+        success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://www.gentlemanknives.co/services'
       });
     }
 
