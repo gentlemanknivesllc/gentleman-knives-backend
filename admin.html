@@ -2,6 +2,16 @@
 <html>
 <head><meta charset="utf-8"><title>Charge final total</title></head>
 <body style="font-family:sans-serif; max-width:420px; margin:60px auto;">
+  <h2>Pending orders</h2>
+  <p style="font-size:13px; color:#666;">Every order that's been paid for (shipping/drop-off/delivery) but not yet finalized &mdash; i.e. still waiting on you to measure the knives and charge the real total.</p>
+
+  <input id="pending-secret" type="password" placeholder="Admin password" style="width:100%; margin-bottom:8px; padding:8px;">
+  <button onclick="loadPending()" style="width:100%; padding:10px; cursor:pointer;">Load pending orders</button>
+  <p id="pending-summary" style="font-size:13px; margin-top:12px; color:#333;"></p>
+  <div id="pending-list" style="margin-top:8px;"></div>
+
+  <hr style="margin:32px 0;">
+
   <h2>Charge final total &mdash; one-time order</h2>
   <p style="font-size:13px; color:#666;">Don't share this page's link publicly &mdash; anyone with the admin password can trigger a charge.</p>
 
@@ -32,6 +42,63 @@
   <p id="draw-result" style="font-size:13px; margin-top:12px; white-space:pre-wrap;"></p>
 
   <script>
+    function fulfillmentLabel(order) {
+      if (order.fulfillment_type === 'dropoff') return 'Drop-off';
+      if (order.fulfillment_type === 'delivery') return 'Delivery ($' + Number(order.delivery_fee || 0).toFixed(2) + ' fee paid)';
+      return 'Mail-in';
+    }
+
+    async function loadPending() {
+      const secret = document.getElementById('pending-secret').value;
+      const summaryEl = document.getElementById('pending-summary');
+      const listEl = document.getElementById('pending-list');
+      summaryEl.textContent = 'Loading...';
+      listEl.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/finalize-order', {
+          method: 'GET',
+          headers: { 'x-admin-secret': secret }
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          summaryEl.textContent = 'Error: ' + data.error;
+          return;
+        }
+
+        const rev = data.revenueSummary;
+        const totalRevenue = Number(rev.total_sharpening) + Number(rev.total_shipping) + Number(rev.total_delivery);
+        summaryEl.innerHTML =
+          '<strong>' + data.pending.length + '</strong> order(s) waiting on a final charge.<br>' +
+          'Gross revenue charged to date (sharpening + shipping/delivery fees, before Stripe/Shippo/gas costs): <strong>$' + totalRevenue.toFixed(2) + '</strong> across ' + rev.order_count + ' finalized order(s).';
+
+        if (!data.pending.length) {
+          listEl.innerHTML = '<p style="font-size:13px; color:#888;">Nothing pending right now.</p>';
+          return;
+        }
+
+        listEl.innerHTML = data.pending.map(function (o) {
+          const itemsSummary = (o.items || []).map(function (i) {
+            return i.qty + '× ' + i.category + (i.size ? ' ' + i.size : '');
+          }).join(', ');
+          const date = new Date(o.created_at).toLocaleDateString();
+          return '<div style="border:1px solid #ddd; padding:10px; margin-bottom:8px; font-size:13px;">' +
+            '<strong>' + o.customer_email + '</strong> &mdash; ' + fulfillmentLabel(o) + ' &mdash; ' + date + '<br>' +
+            'Items: ' + (itemsSummary || '(none)') + '<br>' +
+            'Estimate on file: $' + Number(o.sharpening_total || 0).toFixed(2) +
+            '<br><button onclick="prefillCharge(' + JSON.stringify(o.customer_email) + ')" style="margin-top:6px; padding:4px 10px; cursor:pointer;">Use this email below</button>' +
+            '</div>';
+        }).join('');
+      } catch (err) {
+        summaryEl.textContent = 'Request failed: ' + err.message;
+      }
+    }
+
+    function prefillCharge(email) {
+      document.getElementById('email').value = email;
+      document.getElementById('email').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
     async function charge() {
       const resultEl = document.getElementById('result');
       resultEl.textContent = 'Charging...';
