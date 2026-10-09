@@ -145,8 +145,8 @@ module.exports = async (req, res) => {
         customer: customer.id,
         payment_method_types: ['card'],
         metadata,
-        success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
-        cancel_url: 'https://www.gentlemanknives.co/services'
+        success_url: 'https://www.gentlemanknives.co/thank-you-local?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://www.gentlemanknives.co/sharpening'
       });
     } else {
       session = await stripe.checkout.sessions.create({
@@ -168,8 +168,8 @@ module.exports = async (req, res) => {
           quantity: 1
         }],
         metadata,
-        success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
-        cancel_url: 'https://www.gentlemanknives.co/services'
+        success_url: 'https://www.gentlemanknives.co/thank-you-local?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://www.gentlemanknives.co/sharpening'
       });
     }
 
