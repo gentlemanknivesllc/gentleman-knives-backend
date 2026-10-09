@@ -108,7 +108,7 @@ module.exports = async (req, res) => {
         subscribeTier: subscribeTier || ''
       },
       success_url: 'https://www.gentlemanknives.co/thank-you?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: 'https://www.gentlemanknives.co/services'
+      cancel_url: 'https://www.gentlemanknives.co/sharpening'
     });
 
     // Log the order up front (pending finalization) so nothing depends on
