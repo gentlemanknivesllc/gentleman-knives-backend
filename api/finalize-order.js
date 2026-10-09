@@ -10,7 +10,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { sql } = require('../lib/db');
 const { estimateForItem, comboKey } = require('../lib/estimates');
 const { totalItemWeight, OUTBOUND_PACKAGING_BUFFER_LB } = require('../lib/shipping');
-const { purchaseLabel, emailReturnLabel } = require('../lib/labels');
+const { purchaseLabel, emailReturnLabel, emailLocalOrderReady } = require('../lib/labels');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -45,7 +45,7 @@ module.exports = async (req, res) => {
 
     // Find this customer's most recent unfinalized order.
     const { rows } = await sql`
-      SELECT id, stripe_session_id, items, sharpening_total FROM orders
+      SELECT id, stripe_session_id, items, sharpening_total, fulfillment_type FROM orders
       WHERE customer_email = ${customerEmail} AND finalized_at IS NULL
       ORDER BY created_at DESC LIMIT 1
     `;
@@ -55,6 +55,7 @@ module.exports = async (req, res) => {
     if (rows.length) {
       const order = rows[0];
       const items = order.items;
+      const fulfillmentType = order.fulfillment_type || 'mail';
 
       // --- Update the "typical price" running averages ---
       const estimateSum = items.reduce((sum, i) => sum + estimateForItem(i) * (i.qty || 1), 0);
@@ -79,43 +80,56 @@ module.exports = async (req, res) => {
         WHERE id = ${order.id}
       `;
 
-      // --- Buy and email the return label ---
-      returnLabelResult.attempted = true;
-      try {
-        const session = await stripe.checkout.sessions.retrieve(order.stripe_session_id);
-        const shippingAddress = (session.collected_information && session.collected_information.shipping_details)
-          ? session.collected_information.shipping_details.address
-          : (session.shipping_details ? session.shipping_details.address : null);
+      if (fulfillmentType === 'mail') {
+        // --- Buy and email the return label ---
+        returnLabelResult.attempted = true;
+        try {
+          const session = await stripe.checkout.sessions.retrieve(order.stripe_session_id);
+          const shippingAddress = (session.collected_information && session.collected_information.shipping_details)
+            ? session.collected_information.shipping_details.address
+            : (session.shipping_details ? session.shipping_details.address : null);
 
-        if (shippingAddress) {
-          const customerAddress = {
-            name: session.customer_details.name,
-            street1: shippingAddress.line1,
-            street2: shippingAddress.line2 || '',
-            city: shippingAddress.city,
-            state: shippingAddress.state,
-            zip: shippingAddress.postal_code,
-            country: shippingAddress.country
-          };
+          if (shippingAddress) {
+            const customerAddress = {
+              name: session.customer_details.name,
+              street1: shippingAddress.line1,
+              street2: shippingAddress.line2 || '',
+              city: shippingAddress.city,
+              state: shippingAddress.state,
+              zip: shippingAddress.postal_code,
+              country: shippingAddress.country
+            };
 
-          const weightLb = Math.round((totalItemWeight(items) + OUTBOUND_PACKAGING_BUFFER_LB) * 100) / 100;
+            const weightLb = Math.round((totalItemWeight(items) + OUTBOUND_PACKAGING_BUFFER_LB) * 100) / 100;
 
-          const label = await purchaseLabel({
-            direction: 'outbound',
-            customerAddress,
-            weightLb
-          });
+            const label = await purchaseLabel({
+              direction: 'outbound',
+              customerAddress,
+              weightLb
+            });
 
-          await emailReturnLabel(customerEmail, label, finalAmount);
-          returnLabelResult.success = true;
-        } else {
-          returnLabelResult.error = 'No shipping address found on the original order';
+            await emailReturnLabel(customerEmail, label, finalAmount);
+            returnLabelResult.success = true;
+          } else {
+            returnLabelResult.error = 'No shipping address found on the original order';
+          }
+        } catch (labelErr) {
+          // The charge already succeeded — don't fail the whole request over
+          // a label hiccup, but surface it clearly so it doesn't go unnoticed.
+          console.error('Return label purchase/email failed:', labelErr);
+          returnLabelResult.error = labelErr.message;
         }
-      } catch (labelErr) {
-        // The charge already succeeded — don't fail the whole request over
-        // a label hiccup, but surface it clearly so it doesn't go unnoticed.
-        console.error('Return label purchase/email failed:', labelErr);
-        returnLabelResult.error = labelErr.message;
+      } else {
+        // Local order (drop-off or delivery) — no shipping label involved.
+        // Drop-off just needs a pickup reminder; delivery needs the
+        // scheduling link again so they can book the RETURN trip (the fee
+        // covers both legs, but each leg is its own appointment).
+        returnLabelResult.attempted = false;
+        try {
+          await emailLocalOrderReady(customerEmail, { fulfillment: fulfillmentType, finalAmount });
+        } catch (emailErr) {
+          console.error('Local "ready" email failed:', emailErr);
+        }
       }
     }
 
