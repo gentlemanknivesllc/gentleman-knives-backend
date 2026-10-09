@@ -5,7 +5,7 @@
 
 const Stripe = require('stripe');
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const { purchaseLabel, emailInboundLabel } = require('../lib/labels');
+const { purchaseLabel, emailInboundLabel, emailLocalOrderConfirmation } = require('../lib/labels');
 const { totalItemWeight, INBOUND_PACKAGING_BUFFER_LB } = require('../lib/shipping');
 const { createSubscriberRecord } = require('../lib/subscriptions');
 const { sql } = require('../lib/db');
@@ -38,8 +38,11 @@ module.exports = async (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
 
+    // Expanding both payment_intent and setup_intent is safe even though
+    // only one is ever populated for a given session — whichever mode
+    // ('payment' vs 'setup') the session wasn't created in just stays null.
     const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
-      expand: ['payment_intent', 'customer']
+      expand: ['payment_intent', 'setup_intent', 'customer']
     });
 
     // Raffle entries are a completely different kind of checkout — no
@@ -56,6 +59,35 @@ module.exports = async (req, res) => {
         `;
       } catch (raffleErr) {
         console.error('Raffle entry recording failed:', raffleErr);
+      }
+
+      return res.status(200).json({ received: true });
+    }
+
+    // Local drop-off/delivery bookings — no label, no shipping address,
+    // possibly no charge at all today (drop-off is a $0 "setup" session
+    // that just saves a card). Branch off before the mail-in logic below,
+    // which assumes a shipping address and a payment_intent always exist.
+    if (fullSession.metadata && fullSession.metadata.type === 'local_order') {
+      try {
+        const paymentMethodId = fullSession.mode === 'setup'
+          ? (fullSession.setup_intent && fullSession.setup_intent.payment_method)
+          : (fullSession.payment_intent && fullSession.payment_intent.payment_method);
+
+        if (paymentMethodId) {
+          await stripe.customers.update(fullSession.customer.id, {
+            metadata: { savedPaymentMethod: paymentMethodId }
+          });
+        }
+
+        const customerEmail = fullSession.customer_details.email;
+        const fulfillment = fullSession.metadata.fulfillment;
+        const deliveryFee = parseFloat(fullSession.metadata.deliveryFee || '0');
+        const oneWayMinutes = fullSession.metadata.oneWayMinutes || null;
+
+        await emailLocalOrderConfirmation(customerEmail, { fulfillment, deliveryFee, oneWayMinutes });
+      } catch (localErr) {
+        console.error('Local order webhook handling failed:', localErr);
       }
 
       return res.status(200).json({ received: true });
