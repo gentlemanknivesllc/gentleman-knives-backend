@@ -82,10 +82,16 @@
             return i.qty + '× ' + i.category + (i.size ? ' ' + i.size : '');
           }).join(', ');
           const date = new Date(o.created_at).toLocaleDateString();
+          const notesHtml = o.notes
+            ? '<div style="margin-top:6px; padding:8px; background:#fff8e1; border:1px solid #e6d28a;">' +
+                '<strong>Note from customer:</strong> ' + o.notes.replace(/</g, '&lt;') +
+              '</div>'
+            : '';
           return '<div style="border:1px solid #ddd; padding:10px; margin-bottom:8px; font-size:13px;">' +
             '<strong>' + o.customer_email + '</strong> &mdash; ' + fulfillmentLabel(o) + ' &mdash; ' + date + '<br>' +
             'Items: ' + (itemsSummary || '(none)') + '<br>' +
             'Estimate on file: $' + Number(o.sharpening_total || 0).toFixed(2) +
+            notesHtml +
             '<br><button onclick="prefillCharge(' + JSON.stringify(o.customer_email) + ')" style="margin-top:6px; padding:4px 10px; cursor:pointer;">Use this email below</button>' +
             '</div>';
         }).join('');
