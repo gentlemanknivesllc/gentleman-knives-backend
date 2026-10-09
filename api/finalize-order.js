@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
     try {
       const pending = await sql`
         SELECT id, customer_email, items, sharpening_total, shipping_charged,
-               delivery_fee, fulfillment_type, created_at
+               delivery_fee, fulfillment_type, notes, created_at
         FROM orders
         WHERE finalized_at IS NULL
         ORDER BY created_at ASC
