@@ -19,6 +19,7 @@ const { sql } = require('../lib/db');
 const { MINIMUM_ITEMS } = require('../lib/shipping');
 const { checkWeeklyCapacity } = require('../lib/capacity');
 const { calculateDeliveryFee } = require('../lib/delivery');
+const { emailNewOrderAlert } = require('../lib/labels');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -179,6 +180,19 @@ module.exports = async (req, res) => {
       INSERT INTO orders (stripe_session_id, customer_email, items, sharpening_total, shipping_charged, fulfillment_type, delivery_fee, notes)
       VALUES (${session.id}, ${customerEmail}, ${JSON.stringify(items)}, ${sharpeningEstimate || 0}, 0, ${fulfillment}, ${deliveryFee}, ${notes || ''})
     `;
+
+    try {
+      await emailNewOrderAlert({
+        fulfillment,
+        customerEmail,
+        items,
+        sharpeningEstimate,
+        chargedNow: deliveryFee,
+        notes
+      });
+    } catch (alertErr) {
+      console.error('New-order alert email failed:', alertErr);
+    }
 
     res.status(200).json({ url: session.url, deliveryFee, oneWayMinutes });
   } catch (err) {
