@@ -15,6 +15,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const { calculateShipping, MINIMUM_ITEMS } = require('../lib/shipping');
 const { sql } = require('../lib/db');
 const { checkWeeklyCapacity } = require('../lib/capacity');
+const { emailNewOrderAlert } = require('../lib/labels');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -117,6 +118,19 @@ module.exports = async (req, res) => {
       INSERT INTO orders (stripe_session_id, customer_email, items, sharpening_total, shipping_charged, notes)
       VALUES (${session.id}, ${customerEmail}, ${JSON.stringify(items)}, ${sharpeningEstimate || 0}, ${shipping.finalShipping}, ${notes || ''})
     `;
+
+    try {
+      await emailNewOrderAlert({
+        fulfillment: 'mail',
+        customerEmail,
+        items,
+        sharpeningEstimate,
+        chargedNow: shipping.finalShipping,
+        notes
+      });
+    } catch (alertErr) {
+      console.error('New-order alert email failed:', alertErr);
+    }
 
     res.status(200).json({ url: session.url });
   } catch (err) {
