@@ -3,15 +3,23 @@
 // real, live numbers — total entries for odds display, and the paid-entry
 // count that actually drives the knife-count bar and graphic. Public.
 //
-// POST: admin-only. Draws one random winner, weighted correctly so every
-// individual entry (free or paid, including each of a bulk paid purchase)
-// has an equal chance — not just an equal chance per database row.
-// Combined into this file (rather than a new one) to stay under Vercel's
-// Hobby-plan function limit.
+// POST: admin-only, two different actions depending on the body:
+//   - {} (empty, or anything without action) -> draws one random winner,
+//     weighted correctly so every individual entry (free or paid, including
+//     each of a bulk paid purchase) has an equal chance. This is the
+//     original behavior admin.html's "Draw Winner" button already relies
+//     on, unchanged.
+//   - { action: 'reconcile' } -> checks Stripe directly for any completed
+//     raffle checkouts the webhook failed to record, and backfills them.
+//     See lib/reconcile.js for the full story on why this exists.
+//
+// Both POST actions, plus GET, are combined into this one file (rather than
+// separate ones) to stay under Vercel's Hobby-plan function limit.
 
 const crypto = require('crypto');
 const { sql } = require('../lib/db');
 const { getRaffleStatus } = require('../lib/raffle');
+const { reconcileRaffleEntries } = require('../lib/reconcile');
 
 async function handleStatus(req, res) {
   const { rows: freeRows } = await sql`
@@ -70,6 +78,15 @@ async function handleDrawWinner(req, res) {
   });
 }
 
+async function handleReconcile(req, res) {
+  if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) {
+    return res.status(401).json({ error: 'Not authorized' });
+  }
+
+  const result = await reconcileRaffleEntries();
+  res.status(200).json(result);
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -80,7 +97,15 @@ module.exports = async (req, res) => {
     if (req.method === 'GET') {
       await handleStatus(req, res);
     } else if (req.method === 'POST') {
-      await handleDrawWinner(req, res);
+      // req.body can be undefined when the client sends no body at all
+      // (admin.html's draw-winner button does exactly that) — guard before
+      // reading .action so that case still falls through to drawing a
+      // winner, same as it always has.
+      if (req.body && req.body.action === 'reconcile') {
+        await handleReconcile(req, res);
+      } else {
+        await handleDrawWinner(req, res);
+      }
     } else {
       res.status(405).json({ error: 'Use GET or POST' });
     }
