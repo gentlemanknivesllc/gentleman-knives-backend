@@ -34,6 +34,15 @@
 
   <hr style="margin:32px 0;">
 
+  <h2>Fix missing raffle entries</h2>
+  <p style="font-size:13px; color:#666;">If someone paid for raffle entries but the count on the raffle page didn't go up, click this. It asks Stripe directly which raffle payments actually went through and adds any that are missing here &mdash; safe to click any time, including just to double-check nothing's missing.</p>
+
+  <input id="reconcile-secret" type="password" placeholder="Admin password" style="width:100%; margin-bottom:8px; padding:8px;">
+  <button onclick="reconcileRaffle()" style="width:100%; padding:10px; cursor:pointer;">Check Stripe &amp; fix missing entries</button>
+  <p id="reconcile-result" style="font-size:13px; margin-top:12px; white-space:pre-wrap;"></p>
+
+  <hr style="margin:32px 0;">
+
   <h2>Draw raffle winner</h2>
   <p style="font-size:13px; color:#666;">Each click draws a genuinely fresh random winner from the current entries. Only run this once you actually mean to pick the final winner.</p>
 
@@ -163,6 +172,38 @@
               : ' — WARNING: charge worked but the return label failed (' + (data.returnLabel.error || 'unknown error') + '). Check Vercel logs or buy the label manually.';
           }
           resultEl.textContent = msg;
+        }
+      } catch (err) {
+        resultEl.textContent = 'Request failed: ' + err.message;
+      }
+    }
+
+    async function reconcileRaffle() {
+      const resultEl = document.getElementById('reconcile-result');
+      resultEl.textContent = 'Checking Stripe...';
+      try {
+        const res = await fetch('/api/raffle-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': document.getElementById('reconcile-secret').value
+          },
+          body: JSON.stringify({ action: 'reconcile' })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.textContent = 'Error: ' + data.error;
+          return;
+        }
+
+        if (data.backfilledCount === 0) {
+          resultEl.textContent = 'Checked ' + data.totalRaffleCheckoutsFoundInStripe + ' raffle payment(s) in Stripe — everything was already recorded correctly. Nothing to fix.';
+        } else {
+          const lines = data.details
+            .filter(function (d) { return d.status.indexOf('BACKFILLED') === 0; })
+            .map(function (d) { return '• ' + d.email + ' — ' + d.quantity + ' entries ($' + d.amountPaid.toFixed(2) + '), paid ' + new Date(d.paidAt).toLocaleDateString(); })
+            .join('\n');
+          resultEl.textContent = 'Fixed ' + data.backfilledCount + ' missing entry/entries:\n' + lines;
         }
       } catch (err) {
         resultEl.textContent = 'Request failed: ' + err.message;
